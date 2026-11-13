@@ -387,8 +387,10 @@ async function api(action, data = {}){
   if (!API_URL.startsWith("https://")) throw new Error("예매 서버 주소가 아직 설정되지 않았습니다. (config.js 파일을 확인하시기 바랍니다)");
   let res;
   try {
-    res = await fetch(API_URL, { method:"POST", headers:{ "Content-Type":"text/plain;charset=utf-8" }, body: JSON.stringify({ action, ...data }) });
-  } catch { throw new Error("서버에 연결하지 못했습니다. 인터넷 연결을 확인한 후 다시 시도해 주시기 바랍니다."); }
+    const ctl = new AbortController(), tm = setTimeout(() => ctl.abort(), action === "book" ? 45000 : 20000);
+    try { res = await fetch(API_URL, { method:"POST", headers:{ "Content-Type":"text/plain;charset=utf-8" }, body: JSON.stringify({ action, ...data }), signal: ctl.signal }); }
+    finally { clearTimeout(tm); }
+  } catch { throw new Error("접속이 많아 응답이 늦어지고 있습니다. 잠시 후 다시 시도해 주시기 바랍니다."); }
   let j;
   try { j = await res.json(); } catch { throw new Error("서버 응답을 읽지 못했습니다. 잠시 후 다시 시도해 주시기 바랍니다."); }
   if (!j.ok){ const e = new Error(j.error || "요청을 처리하지 못했습니다."); e.taken = j.taken || []; throw e; }
@@ -443,19 +445,30 @@ function show(v){
   document.querySelectorAll("#steps li").forEach(li => li.classList.toggle("on", li.dataset.s === v));
   $("steps").classList.toggle("hidden", v === "home");
   clearInterval(seatTimer);
-  if (v === "seats"){ S.centered = false; Z.ready = false; renderGrid(); loadSeats(); seatTimer = setInterval(loadSeats, 15000); }
+  if (v === "seats"){ S.centered = false; Z.ready = false; renderGrid(); loadSeats(); seatTimer = setInterval(loadSeats, 40000); }
   if (v === "info") prepInfo();
   if (v === "home"){ renderMine(); refreshMine(); }
   window.scrollTo({ top:0 });
 }
 
 /* ---------- 좌석 ---------- */
+let seatBusy = false, seatRetry = null, seatFails = 0;
 async function loadSeats(){
+  if (seatBusy) return;                 // 이전 요청이 끝나기 전엔 다시 요청하지 않아요
+  if (document.hidden && S.seatsLoaded) return;
+  seatBusy = true; clearTimeout(seatRetry);
   try {
     const j = await api("seats");
-    S.taken = new Set(j.taken); S.seatsLoaded = true; notice("");
+    S.taken = new Set(j.taken); S.seatsLoaded = true; seatFails = 0; notice("");
     if (S.view === "seats") renderGrid();
-  } catch(e){ notice(e.message); if (!S.seatsLoaded) $("seatSum").textContent = "좌석 정보를 불러오지 못했습니다"; }
+  } catch(e){
+    seatFails++;
+    if (!S.seatsLoaded){
+      $("seatSum").textContent = "접속이 많아 좌석 정보를 불러오는 중입니다. 잠시만 기다려 주십시오…";
+      const wait = Math.min(15000, 2000 * seatFails) + Math.random()*2000;
+      if (S.view === "seats") seatRetry = setTimeout(loadSeats, wait);
+    }
+  } finally { seatBusy = false; }
 }
 function rowSeats(r){
   const s = new Set();
