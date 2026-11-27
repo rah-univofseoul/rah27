@@ -379,17 +379,21 @@ const PREVIEW_CLOSED = /(?:^|[?&])preview=closed(?:&|$)/.test(location.search);
 const SALE_END = Date.parse(CONFIG.saleEnd);
 const saleClosed = () => PREVIEW_CLOSED || (!isNaN(SALE_END) && Date.now() >= SALE_END);
 const CLOSED_MSG = "사전 예매가 마감되었습니다";
+/* 운영진 잔여석 조회: 주소 뒤에 ?staff=rahdius1129 → 마감 후에도 좌석 배치도·잔여석만 보기 (예매는 불가) */
+const STAFF = /(?:^|[?&])staff=rahdius1129(?:&|$)/.test(location.search);
+const STAFF_BTN = "잔여석 보기 (운영진)";
 let closedShown = false;
 function applyClosed(){
   if (!saleClosed()) return false;
   const b = $("startBtn");
-  b.textContent = CLOSED_MSG; b.disabled = true; b.setAttribute("aria-disabled","true");
+  if (STAFF) b.textContent = STAFF_BTN;
+  else { b.textContent = CLOSED_MSG; b.disabled = true; b.setAttribute("aria-disabled","true"); }
   const n = $("earlyNote");
   n.className = "closed-note";
   n.textContent = "R.A.H 제27회 정기공연 사전 예매가 마감되었습니다. 현장 예매(" + won(CONFIG.doorPrice) + ")는 공연 당일 현장에서 가능합니다. 이미 예매하신 분은 아래 '예매 내역 조회'에서 티켓을 확인하실 수 있습니다.";
   if (!closedShown){
     closedShown = true;
-    if (S.view === "seats" || S.view === "info"){ S.sel = []; show("home"); notice(CLOSED_MSG + ". 현장 예매는 공연 당일 현장에서 가능합니다."); }
+    if (S.view === "info" || (S.view === "seats" && !STAFF)){ S.sel = []; show("home"); notice(CLOSED_MSG + ". 현장 예매는 공연 당일 현장에서 가능합니다."); }
   }
   return true;
 }
@@ -463,7 +467,8 @@ function renderInfo(){
 
 let seatTimer = null;
 function show(v){
-  if ((v === "seats" || v === "info") && saleClosed()){ applyClosed(); v = "home"; }
+  if (v === "info" && STAFF) v = "seats";
+  if ((v === "seats" || v === "info") && saleClosed() && !(STAFF && v === "seats")){ applyClosed(); v = "home"; }
   S.view = v;
   ["home","seats","info","ticket"].forEach(x => $("v-"+x).classList.toggle("hidden", x !== v));
   document.querySelectorAll("#steps li").forEach(li => li.classList.toggle("on", li.dataset.s === v));
@@ -626,6 +631,7 @@ function zAround(px, py, k){           // 화면의 (px,py) 지점을 고정한 
 })();
 
 function toggleSeat(id){
+  if (STAFF) return;
   S.sel = S.sel.includes(id) ? S.sel.filter(x => x !== id) : [...S.sel, id];
   renderGrid();
 }
@@ -635,9 +641,15 @@ function updateSum(){
   const n = S.sel.length, sum = $("seatSum");
   sum.replaceChildren();
   if (!S.seatsLoaded) sum.textContent = "좌석 정보를 불러오는 중…";
+  else if (STAFF){
+    let left = 0;
+    for (const r of CONFIG.rows) for (const c of rowSeats(r)){ const id = r+c; if (!S.taken.has(id) && !CONFIG.blocked.includes(id)) left++; }
+    const b=document.createElement("b"); b.textContent = "잔여 " + left + "석";
+    sum.append("운영진 조회 · ", b, " (예매 불가 · 40초마다 갱신)");
+  }
   else if (!n) sum.textContent = "좌석을 선택해 주십시오";
   else { const s=document.createElement("span"); s.textContent = sortSeats(S.sel).join(", ") + " · "; const b=document.createElement("b"); b.textContent = won(n*CONFIG.price); sum.append(s,b); }
-  $("seatNext").disabled = !n;
+  $("seatNext").disabled = !n || STAFF;
 }
 
 /* ---------- 환불·양도 안내 ---------- */
@@ -690,7 +702,7 @@ async function copyText(t){
   } catch { return false; }
 }
 async function book(){
-  if (applyClosed()) return;
+  if (STAFF || applyClosed()) return;
   $("bookBtn").disabled = true; $("bookBtn").textContent = "예매 중…"; $("bookErr").textContent = "";
   try {
     const j = await api("book", { name:$("name").value.trim(), phone:normPhone($("phone").value.trim()), seats:sortSeats(S.sel) });
@@ -876,7 +888,7 @@ $("saveBtn").onclick = async () => {
 };
 
 /* ---------- 버튼 ---------- */
-$("startBtn").onclick = () => { if (applyClosed()) return; show("seats"); };
+$("startBtn").onclick = () => { if (applyClosed() && !STAFF) return; show("seats"); };
 $("homeBtn").onclick = () => show("home");
 $("seatBack").onclick = () => show("home");
 $("seatNext").onclick = () => S.sel.length && show("info");
@@ -887,6 +899,7 @@ document.addEventListener("visibilitychange", () => { if (!document.hidden && S.
 
 /* ---------- 시작 ---------- */
 renderInfo(); loadMine(); show("home"); applyClosed();
+if (STAFF) $("startBtn").textContent = STAFF_BTN;
 setInterval(applyClosed, 10000);              // 페이지를 켜둔 채 자정이 지나도 자동으로 마감돼요
 document.addEventListener("visibilitychange", () => { if (!document.hidden) applyClosed(); });
 if (!API_URL.startsWith("https://")) notice("예매 서버 주소가 아직 설정되지 않았습니다. (config.js 파일을 확인하시기 바랍니다)");
